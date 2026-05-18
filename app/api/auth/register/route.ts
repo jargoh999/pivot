@@ -93,7 +93,7 @@ export async function POST(req: Request) {
 
       console.log('Sending email to:', email);
       const info = await transporter.sendMail({
-        from: process.env.GMAIL_EMAIL!,
+        from: `"Pivot PLC" <${process.env.GMAIL_EMAIL}>`,
         to: email,
         subject: 'Verify your Pivot account',
         html: `

@@ -1,4 +1,7 @@
 import mongoose from 'mongoose';
+import User from './models/User';
+import Conversation from './models/Conversation';
+import Message from './models/Message';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 
@@ -25,6 +28,9 @@ if (!global.mongoose) {
 }
 
 async function connectDB(): Promise<typeof mongoose> {
+  // Ensure all schemas are registered to prevent Next.js tree-shaking from causing MissingSchemaErrors
+  const _models = { User, Conversation, Message };
+
   if (cached.conn) {
     return cached.conn;
   }
@@ -33,7 +39,6 @@ async function connectDB(): Promise<typeof mongoose> {
     const opts = {
       bufferCommands: false,
     };
-
     cached.promise = mongoose.connect(MONGODB_URI!, opts);
   }
 
@@ -46,5 +51,4 @@ async function connectDB(): Promise<typeof mongoose> {
 
   return cached.conn;
 }
-
 export default connectDB;

@@ -1,9 +1,10 @@
 "use client"
 
-import { Heart, X, Compass, MessageSquareHeart, Merge } from "lucide-react"
+import { Heart, X } from "lucide-react"
 import Image from "next/image"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import BottomNavigation from "@/components/BottomNavigation"
 
 interface Profile {
     id: number
@@ -93,7 +94,6 @@ export default function MatchesPage() {
     const [likedIds, setLikedIds] = useState<number[]>([])
     const [filterDate, setFilterDate] = useState<"all" | "today" | "yesterday">("all")
     const [filterType, setFilterType] = useState<"all" | "match" | "like">("all")
-    const [activeButton, setActiveButton] = useState<string | null>(null)
 
     const toggleLike = (id: number) => {
         setLikedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]))
@@ -115,7 +115,7 @@ export default function MatchesPage() {
                         <h1 className="text-3xl sm:text-4xl font-bold text-black">Matches</h1>
                         <p className="mt-1 sm:mt-2 text-xs sm:text-sm text-gray-600">This is a list of people who have liked you and your matches.</p>
                     </div>
-                  
+
                 </div>
 
                 {/* Filters */}
@@ -203,66 +203,8 @@ export default function MatchesPage() {
                         </div>
                     </div>
                 )}
-                {/* Discover Control Buttons */}
-                <div className="fixed bottom-0 left-0 right-0 z-50 bg-transparent p-3 md:p-4">
-                    <div className="mx-auto flex-1 max-w-md flex items-center justify-between rounded-2xl border-[#fcedef] border-2 relative bg-white">
-                        <div className="relative">
-                            <Button
-                                onClick={() => setActiveButton('discover')}
-                                className="flex items-center justify-center w-16 h-16"
-                                disabled={false}
-                                variant={"ghost"}
-                            >
-                                <Compass className="h-10 w-10"/>
-                            </Button>
-                            {activeButton === 'discover' && (
-                                <div className="absolute -top-1 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-rose-500 rounded-full"></div>
-                            )}
-                        </div>
-
-                        <div className="relative">
-                            <Button
-                                onClick={() => setActiveButton('likes')}
-                                className="flex items-center justify-center w-12 h-12"
-                                disabled={false}
-                                variant={"ghost"}
-                            >
-                                <Heart className="w-5 h-5" />
-                            </Button>
-                            {activeButton === 'likes' && (
-                                <div className="absolute -top-1 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-rose-500 rounded-full"></div>
-                            )}
-                        </div>
-
-                        <div className="relative">
-                            <Button
-                                onClick={() => setActiveButton('messages')}
-                                className="flex items-center justify-center w-12 h-12"
-                                disabled={false}
-                                variant={"ghost"}
-                            >
-                                <MessageSquareHeart className="w-5 h-5" />
-                            </Button>
-                            {activeButton === 'messages' && (
-                                <div className="absolute -top-1 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-rose-500 rounded-full"></div>
-                            )}
-                        </div>
-
-                        <div className="relative">
-                            <Button
-                                onClick={() => setActiveButton('more')}
-                                className="flex items-center justify-center w-12 h-12"
-                                disabled={false}
-                                variant={"ghost"}
-                            >
-                                <Merge className="w-5 h-5" />
-                            </Button>
-                            {activeButton === 'more' && (
-                                <div className="absolute -top-1 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-rose-500 rounded-full"></div>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                {/* Bottom Navigation */}
+                <BottomNavigation />
             </div>
         </div>
     )

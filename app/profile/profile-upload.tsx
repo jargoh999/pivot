@@ -1,20 +1,39 @@
 "use client"
 
 import { useState, useRef } from "react"
-import { Camera, Upload } from "lucide-react"
+import { Camera, Upload, Loader2 } from "lucide-react"
 
-export default function ProfileUpload() {
-    const [preview, setPreview] = useState<string | null>(null)
+interface ProfileUploadProps {
+    currentPhoto?: string
+    onPhotoUpload?: (file: File) => Promise<void>
+}
+
+export default function ProfileUpload({ currentPhoto, onPhotoUpload }: ProfileUploadProps) {
+    const [preview, setPreview] = useState<string | null>(currentPhoto || null)
+    const [isUploading, setIsUploading] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
-        if (file) {
-            const reader = new FileReader()
-            reader.onloadend = () => {
-                setPreview(reader.result as string)
+        if (!file) return
+
+        // Show local preview immediately
+        const reader = new FileReader()
+        reader.onloadend = () => {
+            setPreview(reader.result as string)
+        }
+        reader.readAsDataURL(file)
+
+        // Upload to Cloudinary if callback provided
+        if (onPhotoUpload) {
+            setIsUploading(true)
+            try {
+                await onPhotoUpload(file)
+            } catch (error) {
+                console.error('Upload failed:', error)
+            } finally {
+                setIsUploading(false)
             }
-            reader.readAsDataURL(file)
         }
     }
 
@@ -23,22 +42,34 @@ export default function ProfileUpload() {
     return (
         <div className="relative group">
             <div className="relative w-24 h-24 md:w-28 md:h-28 rounded-full overflow-hidden border-4 border-white dark:border-gray-700 shadow-lg">
-                <img 
-                    src={preview || defaultAvatar} 
-                    alt="Profile" 
-                    className="w-full h-full object-cover transition-opacity group-hover:opacity-90" 
+                <img
+                    src={preview || defaultAvatar}
+                    alt="Profile"
+                    className="w-full h-full object-cover transition-opacity group-hover:opacity-90"
                 />
-                
+
                 {/* Overlay on hover */}
                 <div className="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-full">
-                    <Upload className="w-6 h-6 text-white" />
+                    {isUploading ? (
+                        <Loader2 className="w-6 h-6 text-white animate-spin" />
+                    ) : (
+                        <Upload className="w-6 h-6 text-white" />
+                    )}
                 </div>
+
+                {/* Loading state */}
+                {isUploading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded-full">
+                        <Loader2 className="w-6 h-6 text-white animate-spin" />
+                    </div>
+                )}
             </div>
 
             <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="absolute -bottom-1 -right-1 w-10 h-10 bg-[#e83f55] hover:bg-[#d1374b] rounded-full flex items-center justify-center text-white shadow-lg transition-colors focus:outline-none focus:ring-2 focus:ring-[#e83f55] focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+                disabled={isUploading}
+                className="absolute -bottom-1 -right-1 w-10 h-10 bg-[#e83f55] hover:bg-[#d1374b] disabled:opacity-50 rounded-full flex items-center justify-center text-white shadow-lg transition-colors focus:outline-none focus:ring-2 focus:ring-[#e83f55] focus:ring-offset-2 dark:focus:ring-offset-gray-800"
                 aria-label="Change profile photo"
             >
                 <Camera className="w-5 h-5" />
@@ -52,12 +83,6 @@ export default function ProfileUpload() {
                 className="hidden"
                 aria-label="Upload profile picture"
             />
-
-            {/* Loading state (can be implemented with state) */}
-            {/* <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded-full">
-                <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-            </div> */}
-            
         </div>
     )
 }

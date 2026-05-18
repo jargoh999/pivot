@@ -33,11 +33,20 @@ export async function GET(req: Request) {
       user: {
         id: user._id,
         email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
+        fullName: user.fullName,
         birthDate: user.birthDate,
         profilePhoto: user.profilePhoto,
         isEmailVerified: user.isEmailVerified,
+        // New profile fields
+        gender: user.gender,
+        country: user.country,
+        timezone: user.timezone,
+        industry: user.industry,
+        experienceLevel: user.experienceLevel,
+        interests: user.interests,
+        intentions: user.intentions,
+        languages: user.languages,
+        bio: user.bio,
         createdAt: user.createdAt,
       },
     });
@@ -63,17 +72,24 @@ export async function PUT(req: Request) {
     }
 
     const { userId } = authResult;
-    const { firstName, lastName, birthDate, profilePhoto } = await req.json();
+    const { birthDate, profilePhoto, gender, country, timezone, industry, experienceLevel, interests, intentions, languages, bio } = await req.json();
 
     // Connect to database
     await connectDB();
 
     // Prepare update data
     const updateData: any = {};
-    if (firstName !== undefined) updateData.firstName = firstName.trim();
-    if (lastName !== undefined) updateData.lastName = lastName.trim();
     if (birthDate !== undefined) updateData.birthDate = new Date(birthDate);
     if (profilePhoto !== undefined) updateData.profilePhoto = profilePhoto;
+    if (gender !== undefined) updateData.gender = gender;
+    if (country !== undefined) updateData.country = country;
+    if (timezone !== undefined) updateData.timezone = timezone;
+    if (industry !== undefined) updateData.industry = industry;
+    if (experienceLevel !== undefined) updateData.experienceLevel = experienceLevel;
+    if (interests !== undefined) updateData.interests = interests;
+    if (intentions !== undefined) updateData.intentions = intentions;
+    if (languages !== undefined) updateData.languages = languages;
+    if (bio !== undefined) updateData.bio = bio.trim();
 
     // Update user
     const updatedUser = await User.findByIdAndUpdate(
@@ -94,11 +110,20 @@ export async function PUT(req: Request) {
       user: {
         id: updatedUser._id,
         email: updatedUser.email,
-        firstName: updatedUser.firstName,
-        lastName: updatedUser.lastName,
+        fullName: updatedUser.fullName,
         birthDate: updatedUser.birthDate,
         profilePhoto: updatedUser.profilePhoto,
         isEmailVerified: updatedUser.isEmailVerified,
+        // New profile fields
+        gender: updatedUser.gender,
+        country: updatedUser.country,
+        timezone: updatedUser.timezone,
+        industry: updatedUser.industry,
+        experienceLevel: updatedUser.experienceLevel,
+        interests: updatedUser.interests,
+        intentions: updatedUser.intentions,
+        languages: updatedUser.languages,
+        bio: updatedUser.bio,
         createdAt: updatedUser.createdAt,
       },
     });

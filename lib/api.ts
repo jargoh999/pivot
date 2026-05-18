@@ -1,6 +1,32 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
+// Enums type definitions
+export interface EnumOption {
+  value: string;
+  label: string;
+}
+
+export interface EnumsResponse {
+  gender: EnumOption[];
+  experienceLevel: EnumOption[];
+  industries: EnumOption[];
+  interests: EnumOption[];
+  intentions: EnumOption[];
+  languages: EnumOption[];
+}
+
 export const api = {
+  // Enums API
+  enums: {
+    get: async () => {
+      const response = await fetch(`${API_BASE_URL}/api/enums`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      return response.json();
+    },
+  },
+
   // Authentication endpoints
   auth: {
     register: async (data: { email: string; password: string; fullName: string }) => {
@@ -53,7 +79,21 @@ export const api = {
       return response.json();
     },
 
-    update: async (token: string, data: { firstName?: string; lastName?: string; birthDate?: string; profilePhoto?: string }) => {
+    update: async (token: string, data: {
+      firstName?: string;
+      lastName?: string;
+      birthDate?: string;
+      profilePhoto?: string;
+      gender?: string;
+      country?: string;
+      timezone?: string;
+      industry?: string;
+      experienceLevel?: string;
+      interests?: string[];
+      intentions?: string[];
+      languages?: string[];
+      bio?: string;
+    }) => {
       const response = await fetch(`${API_BASE_URL}/api/profile`, {
         method: 'PUT',
         headers: {

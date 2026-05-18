@@ -2,10 +2,7 @@ import { NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import User from '@/lib/models/User';
 import jwt from 'jsonwebtoken';
-import { nanoid } from 'nanoid';
-import { Resend } from 'resend';
-
-const resend = new Resend(process.env.RESEND_API_KEY);
+import nodemailer from 'nodemailer';
 
 export async function POST(req: Request) {
   try {
@@ -52,27 +49,61 @@ export async function POST(req: Request) {
 
       // Send verification email
       try {
-        await resend.emails.send({
-          from: process.env.FROM_EMAIL!,
+        const transporter = nodemailer.createTransport({
+          host: process.env.GMAIL_HOST,
+          port: parseInt(process.env.GMAIL_PORT || '587'),
+          secure: process.env.GMAIL_SECURE === 'true',
+          auth: {
+            user: process.env.GMAIL_EMAIL,
+            pass: process.env.GMAIL_APP_PASSWORD,
+          },
+        });
+
+        await transporter.sendMail({
+          from: `"Pivot PLC" <${process.env.GMAIL_EMAIL}>`,
           to: email,
-          subject: 'Verify your Vibe Chat account',
+          subject: 'Verify your Pivot account',
           html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-              <div style="text-align: center; margin-bottom: 30px;">
-                <h1 style="color: #e83f55; margin: 0;">Vibe Chat</h1>
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Verify Your Pivot Account</title>
+              <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; background: #f8f9fa; border-radius: 12px; }
+                .logo { text-align: center; margin-bottom: 30px; }
+                .header { text-align: center; margin-bottom: 30px; }
+                .title { color: #e83f55; font-size: 28px; font-weight: bold; margin: 0; }
+                .code-box { background: #e83f55; color: white; padding: 20px; border-radius: 8px; text-align: center; margin: 30px 0; }
+                .code { font-size: 32px; font-weight: bold; letter-spacing: 8px; }
+                .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+                .footer a { color: #e83f55; text-decoration: none; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="logo">
+                  <img src="https://res.cloudinary.com/dbjtncfmz/image/upload/v1778149482/logo1_fm2jox.png" alt="Pivot Logo" style="max-width: 120px; height: auto; margin-bottom: 10px;" />
+                  <h2 style="color: #e83f55; margin: 0; font-size: 24px;">Pivot</h2>
+                </div>
+                <div class="header">
+                  <h1 class="title">Verify Your Email</h1>
+                  <p>Please use the verification code below to complete your login:</p>
+                </div>
+                <div class="code-box">
+                  <p style="margin: 0 0 15px 0; font-size: 16px;">Your verification code is:</p>
+                  <div class="code">${verificationCode}</div>
+                  <p style="margin: 15px 0 0 0; font-size: 14px;">This code will expire in 10 minutes.</p>
+                </div>
+                <div class="footer">
+                  <p>Cannot find the email? Check your spam folder or <a href="mailto:support@pivot.app">contact support</a></p>
+                  <p>© 2026 Pivot. All rights reserved.</p>
+                </div>
               </div>
-              <h2 style="color: #333; margin-bottom: 20px;">Verify Your Email Address</h2>
-              <p style="color: #666; margin-bottom: 20px;">Please use the verification code below to complete your login:</p>
-              <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; margin: 30px 0;">
-                <span style="font-size: 32px; font-weight: bold; color: #e83f55; letter-spacing: 5px;">${verificationCode}</span>
-              </div>
-              <p style="color: #666; margin-bottom: 20px;">This code will expire in 10 minutes.</p>
-              <p style="color: #666; margin-bottom: 20px;">If you didn't request this verification, please ignore this email.</p>
-              <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-              <p style="color: #999; font-size: 12px; text-align: center;">
-                © 2024 Vibe Chat. All rights reserved.
-              </p>
-            </div>
+            </body>
+            </html>
           `,
         });
       } catch (emailError) {
@@ -98,8 +129,7 @@ export async function POST(req: Request) {
     const userResponse = {
       id: user._id,
       email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
+      fullName: user.fullName,
       isEmailVerified: user.isEmailVerified,
       birthDate: user.birthDate,
       profilePhoto: user.profilePhoto,

@@ -39,7 +39,7 @@ export default function MatchPage() {
                     >
                         {/* Heart Badge */}
                         <div className="absolute top-2 right-2 sm:top-4 sm:right-4 w-9 h-9 sm:w-12 sm:h-12 bg-white rounded-full flex items-center justify-center shadow-lg z-20">
-                        <Heart className="w-5 h-5 sm:w-6 sm:h-6 text-red-500  fill-red-500" />
+                            <Heart className="w-5 h-5 sm:w-6 sm:h-6 text-red-500  fill-red-500" />
                         </div>
                     </div>
 
@@ -76,7 +76,7 @@ export default function MatchPage() {
                     </button>
                 </div>
 
-                <BottomNavigation activeButton={activeButton} onNavigate={setActiveButton} />
+                <BottomNavigation />
             </div>
         </div>
     )

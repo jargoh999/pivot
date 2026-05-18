@@ -28,6 +28,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import TestNotificationButton from "@/components/TestNotificationButton"
 import NotificationToggle from "@/components/NotificationToggle"
 import NotificationDebug from "@/components/NotificationDebug"
+import BottomNavigation from "@/components/BottomNavigation"
 import { Badge } from "@/components/ui/badge"
 interface Person {
   id: string
@@ -859,6 +860,8 @@ export default function HotspotPage() {
         <TestNotificationButton />
         <NotificationToggle />
       </div>
+
+      <BottomNavigation />
     </div>
   )
 }

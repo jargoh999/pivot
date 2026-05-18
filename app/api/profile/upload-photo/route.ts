@@ -1,8 +1,16 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import User from '@/lib/models/User';
-import jwt from 'jsonwebtoken';
 import { authMiddleware } from '@/lib/middleware/auth';
+import { v2 as cloudinary } from 'cloudinary';
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: 'dbjtncfmz',
+  api_key: '725746419533487',
+  api_secret: 'jA67eLKFbX3Fxnk6U5bKA1EqDzc',
+  secure: true,
+});
 
 export async function POST(req: Request) {
   try {
@@ -46,19 +54,37 @@ export async function POST(req: Request) {
       );
     }
 
-    // Convert file to base64
+    // Convert file to buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    const base64String = buffer.toString('base64');
-    const dataUrl = `data:${file.type};base64,${base64String}`;
+
+    // Upload to Cloudinary
+    const uploadResult = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        {
+          folder: 'pivot/profiles',
+          public_id: `user_${userId}_${Date.now()}`,
+          transformation: [
+            { width: 400, height: 400, crop: 'fill', gravity: 'face' },
+            { quality: 'auto', fetch_format: 'auto' },
+          ],
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      ).end(buffer);
+    });
+
+    const cloudinaryUrl = (uploadResult as any).secure_url;
 
     // Connect to database
     await connectDB();
 
-    // Update user profile photo
+    // Update user profile photo with Cloudinary URL
     const updatedUser = await User.findByIdAndUpdate(
       userId,
-      { profilePhoto: dataUrl },
+      { profilePhoto: cloudinaryUrl },
       { new: true, runValidators: true }
     ).select('-password -emailVerificationCode -emailVerificationExpires');
 
@@ -71,6 +97,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       message: 'Profile photo uploaded successfully',
+      profilePhoto: cloudinaryUrl,
       user: {
         id: updatedUser._id,
         email: updatedUser.email,

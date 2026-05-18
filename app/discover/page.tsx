@@ -378,7 +378,7 @@ export default function DiscoverPage() {
       </div>
 
       {/* Bottom Navigation */}
-      <BottomNavigation activeButton={activeButton} onNavigate={setActiveButton} />
+      <BottomNavigation />
 
       {/* Filter Modal */}
       {showFilters && (

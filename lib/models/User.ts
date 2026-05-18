@@ -35,6 +35,40 @@ const userSchema = new Schema({
   emailVerificationExpires: {
     type: Date,
   },
+  // Profile fields
+  gender: {
+    type: String,
+    enum: ['male', 'female', 'non-binary', 'prefer-not-to-say'],
+  },
+  country: {
+    type: String,
+  },
+  timezone: {
+    type: String,
+  },
+  industry: {
+    type: String,
+  },
+  experienceLevel: {
+    type: String,
+    enum: ['student', 'entry', 'mid', 'senior', 'executive'],
+  },
+  interests: {
+    type: [String],
+    default: [],
+  },
+  intentions: {
+    type: [String],
+    default: [],
+  },
+  languages: {
+    type: [String],
+    default: [],
+  },
+  bio: {
+    type: String,
+    maxlength: 500,
+  },
 }, {
   timestamps: true,
 });
