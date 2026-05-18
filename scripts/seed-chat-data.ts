@@ -4,7 +4,7 @@ import User from '../lib/models/User';
 import Conversation from '../lib/models/Conversation';
 import Message from '../lib/models/Message';
 
-const MONGODB_URI = 'mongodb+srv://fatoyeayomide123456:r64YxR3lcNkUxYDd@cluster0.6izol.mongodb.net/vibe?appName=Cluster0';
+const MONGODB_URI = '';
 
 const activitiesData = [
   {
