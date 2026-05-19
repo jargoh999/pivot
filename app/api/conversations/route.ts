@@ -26,7 +26,7 @@ export async function GET(req: Request) {
       participants: userId,
     })
       .populate('lastMessage')
-      .populate('participants', 'fullName profilePhoto')
+      .populate('participants', 'fullName profilePhoto lastActive')
       .sort({ updatedAt: -1 });
 
     // Format conversations for frontend
@@ -61,6 +61,7 @@ export async function GET(req: Request) {
           time: lastMessageTime,
           unread: unreadCount,
           isTyping: false, // Will be updated via SSE
+          lastActive: otherParticipant?.lastActive || null,
         };
       })
     );

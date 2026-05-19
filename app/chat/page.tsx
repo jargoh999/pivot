@@ -1,11 +1,13 @@
 "use client"
 
-import { Search, Sliders, Compass, Heart, MessageSquareHeart, Merge, X, Send, Mic, Trash2, Image as ImageIcon, Paperclip } from "lucide-react"
+import { Search, Sliders, Compass, Heart, MessageSquareHeart, Merge, X, Send, Mic, Trash2, Image as ImageIcon, Paperclip, Smile } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import BottomNavigation from "@/components/BottomNavigation"
 import VoiceNotePlayer from "@/components/VoiceNotePlayer"
 import ReactionPicker from "@/components/ReactionPicker"
+
+const LOCAL_FALLBACKS = ["😀", "😂", "🥰", "😍", "😎", "😊", "😉", "🥳", "👍", "🔥", "❤️", "🙌"]
 
 // Helper function to get auth token
 const getAuthToken = () => {
@@ -13,6 +15,37 @@ const getAuthToken = () => {
         return localStorage.getItem('vibe_chat_token')
     }
     return null
+}
+
+function formatLastActive(lastActiveStr?: string | Date | null): string {
+    if (!lastActiveStr) return "Offline"
+    
+    const lastActive = new Date(lastActiveStr)
+    const now = new Date()
+    
+    // Check if truly active (within last 2 minutes)
+    const diffMs = now.getTime() - lastActive.getTime()
+    const diffMins = diffMs / (1000 * 60)
+    
+    if (diffMins < 2) {
+        return "Active now"
+    }
+    
+    const lastActiveDate = new Date(lastActive.getFullYear(), lastActive.getMonth(), lastActive.getDate())
+    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const yesterdayDate = new Date(todayDate)
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1)
+    
+    const timeStr = lastActive.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    
+    if (lastActiveDate.getTime() === todayDate.getTime()) {
+        return `Last seen today - ${timeStr}`
+    } else if (lastActiveDate.getTime() === yesterdayDate.getTime()) {
+        return `Last seen yesterday - ${timeStr}`
+    } else {
+        const dateStr = lastActive.toLocaleDateString([], { day: '2-digit', month: '2-digit', year: 'numeric' })
+        return `Last seen ${dateStr}`
+    }
 }
 
 interface Message {
@@ -23,6 +56,7 @@ interface Message {
     time: string
     unread: number
     isTyping?: boolean
+    lastActive?: string | null
 }
 
 interface Activity {
@@ -74,6 +108,10 @@ export default function MessagesPage() {
     const [messages, setMessages] = useState<Message[]>([])
     const eventSourceRef = useRef<EventSource | null>(null)
 
+    // Page loading indicators
+    const [loadingConversations, setLoadingConversations] = useState(false)
+    const [loadingMessages, setLoadingMessages] = useState(false)
+
     // Voice recording state
     const [isRecording, setIsRecording] = useState(false)
     const [recordingTime, setRecordingTime] = useState(0)
@@ -86,6 +124,12 @@ export default function MessagesPage() {
     const [activeReactionPicker, setActiveReactionPicker] = useState<{ messageId: string, rect: DOMRect } | null>(null)
     const fileInputRef = useRef<HTMLInputElement | null>(null)
 
+    // Input emoji picker and lightbox states
+    const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false)
+    const [inputEmojis, setInputEmojis] = useState<string[]>([])
+    const [loadingInputEmojis, setLoadingInputEmojis] = useState(false)
+    const [lightboxImage, setLightboxImage] = useState<string | null>(null)
+
     // Decode current user ID from JWT
     const getUserIdFromToken = () => {
         const token = getAuthToken()
@@ -97,6 +141,23 @@ export default function MessagesPage() {
         } catch (e) {
             return null
         }
+    }
+
+    const updateSidebarWithNewMessage = (conversationId: string, text: string, timestamp: string) => {
+        const date = new Date(timestamp)
+        const timeStr = date.toLocaleString()
+        setMessages(prev => {
+            const chatIndex = prev.findIndex(c => c.id === conversationId)
+            if (chatIndex === -1) return prev
+            const updatedChats = [...prev]
+            const chat = { 
+                ...updatedChats[chatIndex], 
+                lastMessage: text, 
+                time: timeStr 
+            }
+            updatedChats.splice(chatIndex, 1)
+            return [chat, ...updatedChats]
+        })
     }
 
     const handleSelectImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -166,6 +227,7 @@ export default function MessagesPage() {
             ...prev,
             [selectedChat.id]: [...(prev[selectedChat.id] || []), optimisticMsg],
         }))
+        updateSidebarWithNewMessage(selectedChat.id, "You: 📷 Photo", optimisticMsg.timestamp)
         setReplyTarget(null)
 
         try {
@@ -400,6 +462,7 @@ export default function MessagesPage() {
             ...prev,
             [selectedChat.id]: [...(prev[selectedChat.id] || []), optimisticMsg],
         }))
+        updateSidebarWithNewMessage(selectedChat.id, "You: 🎤 Voice Note", optimisticMsg.timestamp)
         setReplyTarget(null)
 
         try {
@@ -468,9 +531,56 @@ export default function MessagesPage() {
         return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date)
     }
 
-    // Fetch conversations on mount
+    // Fetch input emojis when picker is opened
+    useEffect(() => {
+        if (!showInputEmojiPicker || inputEmojis.length > 0) return
+
+        let active = true
+        async function fetchInputEmojis() {
+            setLoadingInputEmojis(true)
+            try {
+                const response = await fetch("https://emojihub.yurace.pro/api/all/category/smileys-and-people")
+                if (!response.ok) throw new Error("API failed")
+                const data = await response.json()
+                if (!active) return
+
+                const parsed: string[] = []
+                data.forEach((item: any) => {
+                    if (item.unicode && item.unicode[0]) {
+                        try {
+                            const codePoint = parseInt(item.unicode[0].replace("U+", ""), 16)
+                            const char = String.fromCodePoint(codePoint)
+                            if (char) parsed.push(char)
+                        } catch (e) {}
+                    }
+                })
+
+                if (parsed.length > 0) {
+                    setInputEmojis(parsed)
+                } else {
+                    setInputEmojis(LOCAL_FALLBACKS)
+                }
+            } catch (err) {
+                console.warn("Failed to fetch emojis for input panel, using local fallbacks:", err)
+                if (active) {
+                    setInputEmojis(LOCAL_FALLBACKS)
+                }
+            } finally {
+                if (active) {
+                    setLoadingInputEmojis(false)
+                }
+            }
+        }
+        fetchInputEmojis()
+        return () => {
+            active = false
+        }
+    }, [showInputEmojiPicker, inputEmojis.length])
+
+        // Fetch conversations on mount
     useEffect(() => {
         const fetchConversations = async () => {
+            setLoadingConversations(true)
             try {
                 const token = getAuthToken()
                 if (!token) return
@@ -487,19 +597,25 @@ export default function MessagesPage() {
                 }
             } catch (error) {
                 console.error('Failed to fetch conversations:', error)
+            } finally {
+                setLoadingConversations(false)
             }
         }
 
         fetchConversations()
     }, [])
 
-    // Fetch messages when chat is selected
+        // Fetch messages when chat is selected
     useEffect(() => {
         if (!selectedChat) return
         setReplyTarget(null)
         setInputValue("")
 
+        // Reset unread count to 0 in local state instantly
+        setMessages(prev => prev.map(m => m.id === selectedChat.id ? { ...m, unread: 0 } : m))
+
         const fetchMessages = async () => {
+            setLoadingMessages(true)
             try {
                 const token = getAuthToken()
                 if (!token) return
@@ -519,6 +635,8 @@ export default function MessagesPage() {
                 }
             } catch (error) {
                 console.error('Failed to fetch messages:', error)
+            } finally {
+                setLoadingMessages(false)
             }
         }
 
@@ -534,6 +652,7 @@ export default function MessagesPage() {
                 const data = JSON.parse(event.data)
                 if (data.type === 'new_message') {
                     const newMsg = data.data
+                    updateSidebarWithNewMessage(selectedChat.id, (newMsg.author === 'me' ? 'You: ' : '') + newMsg.text, newMsg.timestamp)
                     setConversations(prev => {
                         const currentChatMsgs = prev[selectedChat.id] || []
                         
@@ -619,6 +738,7 @@ export default function MessagesPage() {
             ...prev,
             [selectedChat.id]: [...(prev[selectedChat.id] || []), optimisticMsg],
         }))
+        updateSidebarWithNewMessage(selectedChat.id, "You: " + text, optimisticMsg.timestamp)
         setInputValue("")
         setReplyTarget(null)
 
@@ -679,12 +799,12 @@ export default function MessagesPage() {
 
     return (
         <div className="min-h-screen bg-background pb-28">
-            {/* Header */}
-            <div className="border-b border-border p-4 sm:p-6">
-                <div className="flex items-center justify-between max-w-2xl mx-auto px-0">
+                        {/* Header */}
+            <div className="border-b border-border bg-white sticky top-0 z-40">
+                <div className="flex items-center justify-between max-w-2xl mx-auto p-4 sm:p-6">
                     <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Messages</h1>
-                    <button className="p-2 hover:bg-muted rounded-lg transition-colors">
-                        <Sliders className="w-5 h-5 sm:w-6 sm:h-6 text-destructive" />
+                    <button className="p-2 hover:bg-muted rounded-full transition-colors cursor-pointer text-[#e83f55]" aria-label="Filters">
+                        <Sliders className="w-5 h-5 sm:w-6 sm:h-6" />
                     </button>
                 </div>
             </div>
@@ -694,31 +814,43 @@ export default function MessagesPage() {
                 <div className="max-w-2xl mx-auto">
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-                        <input
+                                                <input
                             type="text"
-                            placeholder="Search"
+                            placeholder="Search messages..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-3 bg-muted text-foreground placeholder:text-muted-foreground rounded-full focus:outline-none focus:ring-2 focus:ring-destructive"
+                            className="w-full pl-10 pr-4 py-3 bg-muted text-foreground placeholder:text-muted-foreground rounded-full focus:outline-none focus:ring-2 focus:ring-[#e83f55] transition-all"
                         />
                     </div>
-                    {/* Filters */}
+                                        {/* Filters */}
                     <div className="mt-3 flex gap-2 overflow-x-auto no-scrollbar">
                         <button
                             onClick={() => setFilter('all')}
-                            className={`px-3 py-1.5 rounded-full text-sm border ${filter === 'all' ? 'bg-foreground text-background' : 'bg-background text-foreground border-border'}`}
+                            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 border cursor-pointer ${
+                                filter === 'all' 
+                                    ? 'bg-[#e83f55] text-white border-[#e83f55] shadow-sm' 
+                                    : 'bg-background text-foreground border-border hover:bg-muted'
+                            }`}
                         >
                             All
                         </button>
                         <button
                             onClick={() => setFilter('unread')}
-                            className={`px-3 py-1.5 rounded-full text-sm border ${filter === 'unread' ? 'bg-foreground text-background' : 'bg-background text-foreground border-border'}`}
+                            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 border cursor-pointer ${
+                                filter === 'unread' 
+                                    ? 'bg-[#e83f55] text-white border-[#e83f55] shadow-sm' 
+                                    : 'bg-background text-foreground border-border hover:bg-muted'
+                            }`}
                         >
                             Unread
                         </button>
                         <button
                             onClick={() => setFilter('typing')}
-                            className={`px-3 py-1.5 rounded-full text-sm border ${filter === 'typing' ? 'bg-foreground text-background' : 'bg-background text-foreground border-border'}`}
+                            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 border cursor-pointer ${
+                                filter === 'typing' 
+                                    ? 'bg-[#e83f55] text-white border-[#e83f55] shadow-sm' 
+                                    : 'bg-background text-foreground border-border hover:bg-muted'
+                            }`}
                         >
                             Typing
                         </button>
@@ -754,61 +886,87 @@ export default function MessagesPage() {
                 <div className="max-w-2xl mx-auto">
                     <h2 className="text-lg sm:text-xl font-bold text-foreground mb-4">Messages</h2>
                     <div className="space-y-0">
-                        {messages
-                            .filter((m) =>
-                                m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                m.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
-                            )
-                            .filter((m) => (filter === 'all' ? true : filter === 'unread' ? m.unread > 0 : !!m.isTyping))
-                            .map((message) => (
-                                <div
-                                    key={message.id}
-                                    onClick={() => { setSelectedChat(message); setShowModal(true) }}
-                                    className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 hover:bg-muted rounded-lg cursor-pointer transition-colors group"
-                                >
-                                    {/* Avatar */}
-                                    <div
-                                        className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full overflow-hidden flex-shrink-0 border border-muted`}
-                                    >
-                                        <img
-                                            src={message.avatar || "/placeholder.svg"}
-                                            alt={message.name}
-                                            className="w-full h-full object-cover"
-                                        />
-                                    </div>
-
-                                    {/* Message Content */}
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <h3 className="font-semibold text-foreground">{message.name}</h3>
+                        {loadingConversations ? (
+                            <div className="space-y-3">
+                                {[1, 2, 3].map((n) => (
+                                    <div key={n} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 animate-pulse">
+                                        <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-muted flex-shrink-0" />
+                                        <div className="flex-1 min-w-0 space-y-2">
+                                            <div className="h-4 bg-muted rounded w-24" />
+                                            <div className="h-3 bg-muted rounded w-48" />
                                         </div>
-                                        <p
-                                            className={`text-sm truncate text-muted-foreground`}
-                                        >
-                                            {message.lastMessage}
-                                        </p>
+                                        <div className="w-12 h-3 bg-muted rounded" />
                                     </div>
-
-                                    {/* Time and Unread Badge */}
-                                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                                        <p className="text-sm text-muted-foreground">{message.time}</p>
-                                        {message.unread > 0 && (
-                                            <div className="w-6 h-6 bg-destructive text-white rounded-full flex items-center justify-center text-xs font-bold">
-                                                {message.unread}
+                                ))}
+                            </div>
+                        ) : messages.length === 0 ? (
+                            <div className="text-center py-8 text-muted-foreground text-sm">
+                                No messages yet
+                            </div>
+                        ) : (
+                            messages
+                                .filter((m) =>
+                                    m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                    m.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .filter((m) => (filter === 'all' ? true : filter === 'unread' ? m.unread > 0 : !!m.isTyping))
+                                .map((message) => (
+                                                                        <div
+                                        key={message.id}
+                                        onClick={() => { setSelectedChat(message); setShowModal(true) }}
+                                        className={`flex items-center gap-3 sm:gap-4 p-3 sm:p-4 hover:bg-muted rounded-lg cursor-pointer transition-colors group ${
+                                            selectedChat?.id === message.id ? 'bg-muted/80' : ''
+                                        }`}
+                                    >
+                                        {/* Avatar */}
+                                        <div className="relative flex-shrink-0">
+                                            <div
+                                                className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full overflow-hidden border border-muted`}
+                                            >
+                                                <img
+                                                    src={message.avatar || "/placeholder.svg"}
+                                                    alt={message.name}
+                                                    className="w-full h-full object-cover"
+                                                />
                                             </div>
-                                        )}
+                                            {formatLastActive(message.lastActive) === "Active now" && (
+                                                <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white shadow-sm" />
+                                            )}
+                                        </div>
+
+                                        {/* Message Content */}
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="font-semibold text-foreground">{message.name}</h3>
+                                            </div>
+                                            <p
+                                                className={`text-sm truncate text-muted-foreground`}
+                                            >
+                                                {message.lastMessage}
+                                            </p>
+                                        </div>
+
+                                        {/* Time and Unread Badge */}
+                                        <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                                            <p className="text-sm text-muted-foreground">{message.time}</p>
+                                                                                        {message.unread > 0 && (
+                                                <div className="w-6 h-6 bg-[#e83f55] text-white rounded-full flex items-center justify-center text-xs font-bold shadow-sm">
+                                                    {message.unread}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                ))
+                        )}
                     </div>
                 </div>
             </div>
 
-            {selectedChat && (
+                        {selectedChat && (
                 <div className={`fixed inset-0 z-[60] flex items-end sm:items-center justify-center px-0 sm:px-4 ${showModal ? 'pointer-events-auto' : 'pointer-events-none'}`}>
                     <div
                         onClick={() => { setShowModal(false); setTimeout(() => setSelectedChat(null), 200) }}
-                        className={`absolute inset-0 bg-black/50 transition-opacity duration-200 ${showModal ? 'opacity-100' : 'opacity-0'}`}
+                        className={`absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity duration-200 ${showModal ? 'opacity-100' : 'opacity-0'}`}
                     />
                     <div
                         className={`relative w-full sm:max-w-md sm:rounded-2xl bg-background sm:shadow-xl sm:border sm:border-border sm:mx-auto sm:my-8 
@@ -817,17 +975,33 @@ export default function MessagesPage() {
                         rounded-t-2xl`}
                         style={{ willChange: 'transform' }}
                     >
-                        <div className="flex items-center gap-3 p-4 border-b border-border">
-                            <div className="w-10 h-10 rounded-full overflow-hidden border border-muted">
-                                <img src={selectedChat.avatar} alt={selectedChat.name} className="w-full h-full object-cover" />
+                                                <div className="flex items-center gap-3 p-4 border-b border-border bg-white rounded-t-2xl">
+                            <div className="relative">
+                                <div className="w-10 h-10 rounded-full overflow-hidden border border-muted">
+                                    <img src={selectedChat.avatar} alt={selectedChat.name} className="w-full h-full object-cover" />
+                                </div>
+                                {formatLastActive(selectedChat.lastActive) === "Active now" && (
+                                    <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white animate-pulse" />
+                                )}
                             </div>
                             <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-foreground truncate">{selectedChat.name}</p>
-                                <p className="text-xs text-muted-foreground">Active now</p>
+                                <div className="flex items-center gap-1">
+                                    {formatLastActive(selectedChat.lastActive) === "Active now" ? (
+                                        <>
+                                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping" />
+                                            <p className="text-[10px] font-medium text-muted-foreground">Active now</p>
+                                        </>
+                                    ) : (
+                                        <p className="text-[10px] font-medium text-muted-foreground">
+                                            {formatLastActive(selectedChat.lastActive)}
+                                        </p>
+                                    )}
+                                </div>
                             </div>
                             <button
                                 onClick={() => { setShowModal(false); setTimeout(() => setSelectedChat(null), 200) }}
-                                className="p-2 rounded-full hover:bg-muted transition"
+                                className="p-2 rounded-full text-muted-foreground hover:text-[#e83f55] hover:bg-rose-50 transition cursor-pointer"
                                 aria-label="Close chat"
                             >
                                 <X className="w-5 h-5" />
@@ -835,102 +1009,155 @@ export default function MessagesPage() {
                         </div>
 
                         <div className="px-4 py-3 space-y-3 h-[65vh] sm:h-[60vh] overflow-y-auto">
-                            {(conversations[selectedChat.id] || [])
-                                .slice()
-                                .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-                                .reduce<{ el: React.ReactNode[]; lastDate: Date | null }>((acc, m, idx, arr) => {
-                                    const d = new Date(m.timestamp)
-                                    const needHeader = !acc.lastDate || !isSameDay(acc.lastDate, d)
-                                    if (needHeader) {
+                                                        {loadingMessages ? (
+                                <div className="flex flex-col items-center justify-center h-full space-y-3">
+                                    <div className="w-8 h-8 rounded-full border-4 border-muted border-t-[#e83f55] animate-spin" />
+                                    <p className="text-xs text-muted-foreground font-medium">Loading messages...</p>
+                                </div>
+                            ) : (conversations[selectedChat.id] || []).length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground text-xs py-12">
+                                    <p>No messages yet. Say hello!</p>
+                                </div>
+                            ) : (
+                                (conversations[selectedChat.id] || [])
+                                    .slice()
+                                    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+                                    .reduce<{ el: React.ReactNode[]; lastDate: Date | null }>((acc, m, idx, arr) => {
+                                        const d = new Date(m.timestamp)
+                                        const needHeader = !acc.lastDate || !isSameDay(acc.lastDate, d)
+                                        if (needHeader) {
+                                            acc.el.push(
+                                                <div key={`hdr-${m.id}`} className="flex items-center gap-3 py-2">
+                                                    <div className="h-px flex-1 bg-border" />
+                                                    <span className="text-xs text-muted-foreground">{formatDayHeader(d)}</span>
+                                                    <div className="h-px flex-1 bg-border" />
+                                                </div>
+                                            )
+                                        }
                                         acc.el.push(
-                                            <div key={`hdr-${m.id}`} className="flex items-center gap-3 py-2">
-                                                <div className="h-px flex-1 bg-border" />
-                                                <span className="text-xs text-muted-foreground">{formatDayHeader(d)}</span>
-                                                <div className="h-px flex-1 bg-border" />
+                                                                                        <div key={m.id} className={`flex ${m.author === 'me' ? 'justify-end' : 'justify-start'} mb-2`}>
+                                                <div 
+                                                    className={`relative max-w-[80%] px-3 py-2 text-sm rounded-2xl ${
+                                                        m.author === 'me' ? 'rounded-br-md bg-[#e83f55] text-white shadow-sm' : 'rounded-bl-md bg-muted text-foreground'
+                                                    }`}
+                                                    onClick={() => setReplyTarget(m)}
+                                                    onContextMenu={(e) => {
+                                                        e.preventDefault()
+                                                        const rect = e.currentTarget.getBoundingClientRect()
+                                                        setActiveReactionPicker({
+                                                            messageId: m.id,
+                                                            rect
+                                                        })
+                                                    }}
+                                                >
+                                                    {m.replyTo && (
+                                                        <div className={`mb-1.5 px-2 py-1 text-[11px] rounded-lg border-l-2 ${
+                                                            m.author === 'me' 
+                                                                ? 'bg-white/15 border-white text-white/90' 
+                                                                : 'bg-black/5 border-[#e83f55] text-muted-foreground'
+                                                        } truncate`}>
+                                                            <span className="font-semibold block text-[10px]">
+                                                                {m.replyTo.author === 'me' ? 'You' : selectedChat.name}
+                                                            </span>
+                                                            {m.replyTo.text}
+                                                        </div>
+                                                    )}
+                                                    {m.imageData ? (
+                                                        <div className="space-y-1">
+                                                            <div className="max-w-full rounded-lg overflow-hidden border border-border/10 bg-muted/20">
+                                                                <img 
+                                                                    src={m.imageData} 
+                                                                    alt="Shared photo" 
+                                                                    className="max-h-60 object-cover rounded-md cursor-pointer hover:opacity-95 transition-opacity" 
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation()
+                                                                        setLightboxImage(m.imageData || null)
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            {m.text !== "📷 Photo" && <div>{m.text}</div>}
+                                                        </div>
+                                                    ) : m.audioData ? (
+                                                        <VoiceNotePlayer
+                                                            audioData={m.audioData}
+                                                            duration={m.audioDuration}
+                                                            author={m.author}
+                                                        />
+                                                    ) : (
+                                                        <div>{m.text}</div>
+                                                    )}
+                                                                                                        <div className={`mt-1 text-[10px] ${m.author === 'me' ? 'text-white/80' : 'text-muted-foreground'}`}>{formatTime(d)}</div>
+
+                                                    {/* Reaction Badges */}
+                                                    {m.reactions && m.reactions.length > 0 && (
+                                                        <div className={`absolute -bottom-2 ${m.author === 'me' ? 'left-2' : 'right-2'} flex gap-0.5 z-10`}>
+                                                            {Array.from(new Set(m.reactions.map(r => r.emoji))).map((emoji, i) => (
+                                                                <div 
+                                                                    key={i} 
+                                                                    className="w-5 h-5 rounded-full bg-background border border-border shadow-sm flex items-center justify-center text-xs hover:scale-110 transition cursor-pointer"
+                                                                    title={`${m.reactions?.filter(r => r.emoji === emoji).length} reaction(s)`}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation()
+                                                                        handleToggleReaction(m.id, emoji)
+                                                                    }}
+                                                                >
+                                                                    {emoji}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         )
-                                    }
-                                    acc.el.push(
-                                        <div key={m.id} className={`flex ${m.author === 'me' ? 'justify-end' : 'justify-start'} mb-2`}>
-                                            <div 
-                                                className={`relative max-w-[80%] px-3 py-2 text-sm rounded-2xl ${
-                                                    m.author === 'me' ? 'rounded-br-md bg-foreground text-background' : 'rounded-bl-md bg-muted text-foreground'
-                                                }`}
-                                                onClick={() => setReplyTarget(m)}
-                                                onContextMenu={(e) => {
-                                                    e.preventDefault()
-                                                    const rect = e.currentTarget.getBoundingClientRect()
-                                                    setActiveReactionPicker({
-                                                        messageId: m.id,
-                                                        rect
-                                                    })
-                                                }}
-                                            >
-                                                {m.replyTo && (
-                                                    <div className={`absolute ${m.author === 'me' ? 'right-2 -top-3' : 'left-2 -top-3'} z-10`}>
-                                                        <div className="px-2 py-1 text-[10px] rounded-full bg-background border border-border text-muted-foreground max-w-[70vw] truncate shadow-sm">
-                                                            Reply to {m.replyTo.author === 'me' ? 'You' : selectedChat.name}: {m.replyTo.text}
-                                                        </div>
-                                                    </div>
-                                                )}
-                                                {m.imageData ? (
-                                                    <div className="space-y-1">
-                                                        <div className="max-w-full rounded-lg overflow-hidden border border-border/10 bg-muted/20">
-                                                            <img src={m.imageData} alt="Shared photo" className="max-h-60 object-cover rounded-md" />
-                                                        </div>
-                                                        {m.text !== "📷 Photo" && <div>{m.text}</div>}
-                                                    </div>
-                                                ) : m.audioData ? (
-                                                    <VoiceNotePlayer
-                                                        audioData={m.audioData}
-                                                        duration={m.audioDuration}
-                                                        author={m.author}
-                                                    />
-                                                ) : (
-                                                    <div>{m.text}</div>
-                                                )}
-                                                <div className={`mt-1 text-[10px] ${m.author === 'me' ? 'text-background/80' : 'text-muted-foreground'}`}>{formatTime(d)}</div>
-
-                                                {/* Reaction Badges */}
-                                                {m.reactions && m.reactions.length > 0 && (
-                                                    <div className={`absolute -bottom-2.5 ${m.author === 'me' ? 'left-2' : 'right-2'} flex gap-1 z-20`}>
-                                                        {Object.entries(
-                                                            m.reactions.reduce<Record<string, number>>((acc, r) => {
-                                                                acc[r.emoji] = (acc[r.emoji] || 0) + 1
-                                                                return acc
-                                                            }, {})
-                                                        ).map(([emoji, count]) => (
-                                                            <div
-                                                                key={emoji}
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation()
-                                                                    handleToggleReaction(m.id, emoji)
-                                                                }}
-                                                                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-background border border-border shadow-sm text-xs cursor-pointer select-none hover:scale-105 active:scale-95 transition-transform text-foreground"
-                                                            >
-                                                                <span>{emoji}</span>
-                                                                {count > 1 && <span className="text-[9px] font-bold text-muted-foreground">{count}</span>}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )
-                                    acc.lastDate = d
-                                    return acc
-                                }, { el: [], lastDate: null }).el}
+                                        acc.lastDate = d
+                                        return acc
+                                    }, { el: [], lastDate: null }).el
+                            )}
                             <div ref={scrollBottomRef} />
                         </div>
 
-                        <div className="p-3 border-t border-border bg-background sticky bottom-0 space-y-2">
-                            {replyTarget && (
-                                <div className="max-w-2xl mx-auto flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-muted border border-border">
+                                                <div className="p-3 border-t border-border bg-white sticky bottom-0 space-y-2 rounded-b-2xl">
+                            {/* Input Emoji Picker Popup */}
+                            {showInputEmojiPicker && (
+                                <div className="absolute bottom-16 left-3 right-3 max-w-sm border border-border bg-background/95 backdrop-blur-md shadow-lg rounded-2xl p-3 z-30 animate-in slide-in-from-bottom-2 duration-150">
+                                    <div className="flex items-center justify-between mb-2 pb-1 border-b border-border">
+                                        <span className="text-xs font-semibold text-muted-foreground">Emojis</span>
+                                        <button 
+                                            type="button" 
+                                            onClick={() => setShowInputEmojiPicker(false)} 
+                                            className="p-1 rounded hover:bg-muted text-muted-foreground cursor-pointer"
+                                        >
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                                                        {loadingInputEmojis ? (
+                                        <div className="flex items-center justify-center py-6">
+                                            <div className="w-4 h-4 rounded-full border-2 border-muted border-t-[#e83f55] animate-spin" />
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-8 gap-1 max-h-40 overflow-y-auto pr-1">
+                                            {inputEmojis.map((emoji) => (
+                                                <button
+                                                    key={emoji}
+                                                    type="button"
+                                                    onClick={() => setInputValue((prev) => prev + emoji)}
+                                                    className="text-2xl hover:scale-125 active:scale-95 transition-transform duration-100 p-1 hover:bg-muted rounded cursor-pointer text-center"
+                                                >
+                                                    {emoji}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                                                        {replyTarget && (
+                                <div className="max-w-2xl mx-auto flex items-center justify-between gap-2 px-3 py-2 rounded-r-xl rounded-l-md bg-muted border-y border-r border-border border-l-4 border-l-[#e83f55]">
                                     <div className="min-w-0">
                                         <p className="text-xs text-muted-foreground">Replying to {replyTarget.author === 'me' ? 'You' : selectedChat.name}</p>
                                         <p className="text-sm truncate text-foreground">{replyTarget.text}</p>
                                     </div>
-                                    <button className="p-1 rounded hover:bg-background" onClick={() => setReplyTarget(null)} aria-label="Cancel reply">
+                                    <button className="p-1 rounded hover:bg-background cursor-pointer" onClick={() => setReplyTarget(null)} aria-label="Cancel reply">
                                         <X className="w-4 h-4 text-muted-foreground" />
                                     </button>
                                 </div>
@@ -975,20 +1202,39 @@ export default function MessagesPage() {
                                     >
                                         <ImageIcon className="w-5 h-5" />
                                     </button>
+                                                                        <button
+                                        type="button"
+                                        onClick={() => setShowInputEmojiPicker(!showInputEmojiPicker)}
+                                        className={`p-2.5 rounded-full hover:bg-muted transition duration-150 cursor-pointer flex-shrink-0 ${
+                                            showInputEmojiPicker ? "text-[#e83f55]" : "text-muted-foreground"
+                                        }`}
+                                        aria-label="Toggle emoji selector"
+                                    >
+                                        <Smile className="w-5 h-5" />
+                                    </button>
                                     <input
                                         type="text"
                                         value={inputValue}
                                         onChange={(e) => setInputValue(e.target.value)}
                                         onKeyDown={handleKeyDown}
                                         placeholder={`Message ${selectedChat.name}`}
-                                        className="flex-1 h-11 px-4 rounded-full bg-muted text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-destructive"
+                                        className="flex-1 h-11 px-4 rounded-full bg-muted text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-[#e83f55] transition-all"
                                     />
                                     {inputValue.trim() ? (
-                                        <Button variant="default" className="h-11 px-4 rounded-full cursor-pointer flex-shrink-0" onClick={handleSend}>
-                                            <Send className="w-4 h-4" />
+                                        <Button 
+                                            variant="default" 
+                                            className="h-11 w-11 rounded-full bg-[#e83f55] hover:bg-[#d62a3f] text-white cursor-pointer flex-shrink-0 flex items-center justify-center p-0 transition-transform active:scale-95" 
+                                            onClick={handleSend}
+                                        >
+                                            <Send className="w-4 h-4 translate-x-[1px]" />
                                         </Button>
                                     ) : (
-                                        <Button variant="default" className="h-11 px-4 rounded-full bg-destructive text-white hover:bg-destructive/95 cursor-pointer flex-shrink-0" onClick={startRecording} aria-label="Record voice note">
+                                        <Button 
+                                            variant="default" 
+                                            className="h-11 w-11 rounded-full bg-[#e83f55] hover:bg-[#d62a3f] text-white cursor-pointer flex-shrink-0 flex items-center justify-center p-0 transition-transform active:scale-95" 
+                                            onClick={startRecording} 
+                                            aria-label="Record voice note"
+                                        >
                                             <Mic className="w-4 h-4" />
                                         </Button>
                                     )}
@@ -1006,6 +1252,27 @@ export default function MessagesPage() {
                     onSelectEmoji={(emoji) => handleToggleReaction(activeReactionPicker.messageId, emoji)}
                     onClose={() => setActiveReactionPicker(null)}
                 />
+            )}
+
+            {/* Lightbox Overlay */}
+            {lightboxImage && (
+                <div 
+                    className="fixed inset-0 z-50 bg-black/95 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-in fade-in duration-200"
+                    onClick={() => setLightboxImage(null)}
+                >
+                    <button 
+                        className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white cursor-pointer transition"
+                        onClick={() => setLightboxImage(null)}
+                    >
+                        <X className="w-6 h-6" />
+                    </button>
+                    <img 
+                        src={lightboxImage} 
+                        alt="Shared photo preview" 
+                        className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl animate-in scale-in duration-150"
+                        onClick={(e) => e.stopPropagation()} 
+                    />
+                </div>
             )}
  
             <BottomNavigation />

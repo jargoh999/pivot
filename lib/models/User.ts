@@ -69,6 +69,10 @@ const userSchema = new Schema({
     type: String,
     maxlength: 500,
   },
+  lastActive: {
+    type: Date,
+    default: Date.now,
+  },
 }, {
   timestamps: true,
 });

@@ -1,5 +1,7 @@
 import { NextRequest } from 'next/server';
 import jwt from 'jsonwebtoken';
+import connectDB from '@/lib/mongodb';
+import User from '@/lib/models/User';
 
 export async function authMiddleware(req: Request) {
   try {
@@ -21,6 +23,15 @@ export async function authMiddleware(req: Request) {
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+    
+    // Update lastActive in background (non-blocking)
+    connectDB().then(() => {
+      User.findByIdAndUpdate(decoded.userId, { lastActive: new Date() }).exec().catch((err: any) => {
+        console.error('Failed to update lastActive:', err);
+      });
+    }).catch((err: any) => {
+      console.error('Failed to connect DB in authMiddleware:', err);
+    });
     
     return { userId: decoded.userId, email: decoded.email };
 
