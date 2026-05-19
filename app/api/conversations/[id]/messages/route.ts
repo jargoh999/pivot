@@ -79,6 +79,13 @@ export async function GET(
         id: msg._id.toString(),
         author: isMe ? 'me' : 'them',
         text: msg.text,
+        audioData: msg.audioData,
+        audioDuration: msg.audioDuration,
+        imageData: msg.imageData,
+        reactions: (msg.reactions || []).map((r: any) => ({
+          userId: r.userId.toString(),
+          emoji: r.emoji,
+        })),
         timestamp: msg.createdAt.toISOString(),
         replyTo,
       };

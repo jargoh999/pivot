@@ -1,9 +1,11 @@
 "use client"
 
-import { Search, Sliders, Compass, Heart, MessageSquareHeart, Merge, X, Send } from "lucide-react"
+import { Search, Sliders, Compass, Heart, MessageSquareHeart, Merge, X, Send, Mic, Trash2, Image as ImageIcon, Paperclip } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import BottomNavigation from "@/components/BottomNavigation"
+import VoiceNotePlayer from "@/components/VoiceNotePlayer"
+import ReactionPicker from "@/components/ReactionPicker"
 
 // Helper function to get auth token
 const getAuthToken = () => {
@@ -35,6 +37,10 @@ interface ChatMessage {
     author: "me" | "them"
     text: string
     timestamp: string // ISO string
+    audioData?: string
+    audioDuration?: number
+    imageData?: string
+    reactions?: { userId: string, emoji: string }[]
     replyTo?: {
         id: string
         text: string
@@ -67,6 +73,383 @@ export default function MessagesPage() {
     const scrollBottomRef = useRef<HTMLDivElement | null>(null)
     const [messages, setMessages] = useState<Message[]>([])
     const eventSourceRef = useRef<EventSource | null>(null)
+
+    // Voice recording state
+    const [isRecording, setIsRecording] = useState(false)
+    const [recordingTime, setRecordingTime] = useState(0)
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+    const audioChunksRef = useRef<Blob[]>([])
+    const timerRef = useRef<NodeJS.Timeout | null>(null)
+    const streamRef = useRef<MediaStream | null>(null)
+
+    // Reaction and Image sharing states & refs
+    const [activeReactionPicker, setActiveReactionPicker] = useState<{ messageId: string, rect: DOMRect } | null>(null)
+    const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+    // Decode current user ID from JWT
+    const getUserIdFromToken = () => {
+        const token = getAuthToken()
+        if (!token) return null
+        try {
+            const payload = token.split(".")[1]
+            const decoded = JSON.parse(atob(payload))
+            return decoded.userId || null
+        } catch (e) {
+            return null
+        }
+    }
+
+    const handleSelectImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file || !selectedChat) return
+
+        const reader = new FileReader()
+        reader.onload = (event) => {
+            const img = new window.Image()
+            img.onload = () => {
+                const canvas = document.createElement("canvas")
+                const maxDim = 800
+                let width = img.width
+                let height = img.height
+
+                if (width > height) {
+                    if (width > maxDim) {
+                        height = Math.round((height * maxDim) / width)
+                        width = maxDim
+                    }
+                } else {
+                    if (height > maxDim) {
+                        width = Math.round((width * maxDim) / height)
+                        height = maxDim
+                    }
+                }
+
+                canvas.width = width
+                canvas.height = height
+
+                const ctx = canvas.getContext("2d")
+                if (!ctx) return
+
+                ctx.drawImage(img, 0, 0, width, height)
+
+                // Client-side WebP compression (0.7 quality)
+                const compressedBase64 = canvas.toDataURL("image/webp", 0.7)
+                handleSendImage(compressedBase64)
+            }
+            img.src = event.target?.result as string
+        }
+        reader.readAsDataURL(file)
+        e.target.value = ""
+    }
+
+    async function handleSendImage(imageData: string) {
+        if (!selectedChat) return
+
+        const token = getAuthToken()
+        if (!token) {
+            console.error('No auth token')
+            return
+        }
+
+        // Optimistic UI update
+        const optimisticMsg: ChatMessage = {
+            id: `temp-${Date.now()}`,
+            author: "me",
+            text: "📷 Photo",
+            imageData,
+            reactions: [],
+            timestamp: new Date().toISOString(),
+            replyTo: replyTarget ? { id: replyTarget.id, text: replyTarget.text, author: replyTarget.author } : undefined,
+        }
+
+        setConversations((prev) => ({
+            ...prev,
+            [selectedChat.id]: [...(prev[selectedChat.id] || []), optimisticMsg],
+        }))
+        setReplyTarget(null)
+
+        try {
+            const response = await fetch('/api/messages', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    conversationId: selectedChat.id,
+                    imageData,
+                    replyTo: replyTarget ? {
+                        id: replyTarget.id,
+                        text: replyTarget.text,
+                        author: replyTarget.author
+                    } : undefined
+                })
+            })
+
+            if (response.ok) {
+                const data = await response.json()
+                setConversations((prev) => ({
+                    ...prev,
+                    [selectedChat.id]: prev[selectedChat.id].map(msg =>
+                        msg.id === optimisticMsg.id ? data.message : msg
+                    )
+                }))
+            } else {
+                setConversations((prev) => ({
+                    ...prev,
+                    [selectedChat.id]: prev[selectedChat.id].filter(
+                        msg => msg.id !== optimisticMsg.id
+                    )
+                }))
+            }
+        } catch (error) {
+            console.error('Failed to send image:', error)
+            setConversations((prev) => ({
+                ...prev,
+                [selectedChat.id]: prev[selectedChat.id].filter(
+                    msg => msg.id !== optimisticMsg.id
+                )
+            }))
+        }
+    }
+
+    const handleToggleReaction = async (messageId: string, emoji: string) => {
+        if (!selectedChat) return
+
+        const token = getAuthToken()
+        if (!token) return
+
+        const userId = getUserIdFromToken()
+        if (!userId) return
+
+        // Optimistic UI update for reactions
+        setConversations((prev) => {
+            const currentChatMsgs = prev[selectedChat.id] || []
+            const updated = currentChatMsgs.map((msg) => {
+                if (msg.id === messageId) {
+                    const reactions = msg.reactions || []
+                    const existingIndex = reactions.findIndex((r) => r.userId === userId)
+                    let newReactions = [...reactions]
+
+                    if (existingIndex > -1) {
+                        if (reactions[existingIndex].emoji === emoji) {
+                            newReactions.splice(existingIndex, 1)
+                        } else {
+                            newReactions[existingIndex] = { userId, emoji }
+                        }
+                    } else {
+                        newReactions.push({ userId, emoji })
+                    }
+
+                    return { ...msg, reactions: newReactions }
+                }
+                return msg
+            })
+            return {
+                ...prev,
+                [selectedChat.id]: updated,
+            }
+        })
+
+        try {
+            const response = await fetch(`/api/messages/${messageId}/react`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`,
+                },
+                body: JSON.stringify({ emoji }),
+            })
+
+            if (response.ok) {
+                const data = await response.json()
+                setConversations((prev) => {
+                    const currentChatMsgs = prev[selectedChat.id] || []
+                    const updated = currentChatMsgs.map((msg) => {
+                        if (msg.id === messageId) {
+                            return { ...msg, reactions: data.reactions }
+                        }
+                        return msg
+                    })
+                    return {
+                        ...prev,
+                        [selectedChat.id]: updated,
+                    }
+                })
+            }
+        } catch (error) {
+            console.error("Failed to toggle reaction:", error)
+        }
+    }
+
+    // Format recording duration
+    const formatDuration = (seconds: number) => {
+        const mins = Math.floor(seconds / 60)
+        const secs = seconds % 60
+        return `${mins}:${secs.toString().padStart(2, "0")}`
+    }
+
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            streamRef.current = stream
+            audioChunksRef.current = []
+
+            let options = {}
+            if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+                options = { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 16000 }
+            } else if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) {
+                options = { mimeType: "audio/ogg;codecs=opus", audioBitsPerSecond: 16000 }
+            } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+                options = { mimeType: "audio/mp4", audioBitsPerSecond: 16000 }
+            }
+
+            const mediaRecorder = new MediaRecorder(stream, options)
+            mediaRecorderRef.current = mediaRecorder
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    audioChunksRef.current.push(event.data)
+                }
+            }
+
+            mediaRecorder.start(250)
+            setIsRecording(true)
+            setRecordingTime(0)
+
+            timerRef.current = setInterval(() => {
+                setRecordingTime((prev) => prev + 1)
+            }, 1000)
+        } catch (err) {
+            console.error("Failed to start recording:", err)
+            alert("Could not access microphone. Please check permissions.")
+        }
+    }
+
+    const stopRecording = (shouldSend: boolean) => {
+        const recorder = mediaRecorderRef.current
+        if (!recorder) return
+
+        if (timerRef.current) {
+            clearInterval(timerRef.current)
+            timerRef.current = null
+        }
+        
+        recorder.onstop = async () => {
+            if (shouldSend && audioChunksRef.current.length > 0) {
+                const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType })
+                const duration = recordingTime
+                await handleSendVoiceNote(audioBlob, duration)
+            }
+            
+            // Stop stream tracks to release microphone light
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach((track) => track.stop())
+                streamRef.current = null
+            }
+        }
+
+        recorder.stop()
+        setIsRecording(false)
+        setRecordingTime(0)
+    }
+
+    const cancelRecording = () => {
+        stopRecording(false)
+    }
+
+    const sendRecording = () => {
+        stopRecording(true)
+    }
+
+    async function handleSendVoiceNote(audioBlob: Blob, duration: number) {
+        if (!selectedChat) return
+
+        const token = getAuthToken()
+        if (!token) {
+            console.error('No auth token')
+            return
+        }
+
+        // Convert audioBlob to Base64 string
+        let audioData = ""
+        try {
+            audioData = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader()
+                reader.onloadend = () => resolve(reader.result as string)
+                reader.onerror = reject
+                reader.readAsDataURL(audioBlob)
+            })
+        } catch (error) {
+            console.error("Failed to convert audio blob to base64:", error)
+            return
+        }
+
+        // Optimistic UI update
+        const optimisticMsg: ChatMessage = {
+            id: `temp-${Date.now()}`,
+            author: "me",
+            text: "🎤 Voice Note",
+            audioData,
+            audioDuration: duration,
+            timestamp: new Date().toISOString(),
+            replyTo: replyTarget ? { id: replyTarget.id, text: replyTarget.text, author: replyTarget.author } : undefined,
+        }
+
+        setConversations((prev) => ({
+            ...prev,
+            [selectedChat.id]: [...(prev[selectedChat.id] || []), optimisticMsg],
+        }))
+        setReplyTarget(null)
+
+        try {
+            const response = await fetch('/api/messages', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    conversationId: selectedChat.id,
+                    audioData,
+                    audioDuration: duration,
+                    replyTo: replyTarget ? {
+                        id: replyTarget.id,
+                        text: replyTarget.text,
+                        author: replyTarget.author
+                    } : undefined
+                })
+            })
+
+            if (response.ok) {
+                const data = await response.json()
+                // Replace optimistic message with real one
+                setConversations((prev) => ({
+                    ...prev,
+                    [selectedChat.id]: prev[selectedChat.id].map(msg =>
+                        msg.id === optimisticMsg.id ? data.message : msg
+                    )
+                }))
+            } else {
+                // Rollback on error
+                setConversations((prev) => ({
+                    ...prev,
+                    [selectedChat.id]: prev[selectedChat.id].filter(
+                        msg => msg.id !== optimisticMsg.id
+                    )
+                }))
+            }
+        } catch (error) {
+            console.error('Failed to send voice note:', error)
+            // Rollback on error
+            setConversations((prev) => ({
+                ...prev,
+                [selectedChat.id]: prev[selectedChat.id].filter(
+                    msg => msg.id !== optimisticMsg.id
+                )
+            }))
+        }
+    }
 
     function isSameDay(a: Date, b: Date) {
         return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
@@ -158,10 +541,10 @@ export default function MessagesPage() {
                         if (currentChatMsgs.some(m => m.id === newMsg.id)) {
                             return prev
                         }
-
+ 
                         // 2. If it's our own message, match and replace the temporary optimistic message
                         if (newMsg.author === 'me') {
-                            const tempIndex = currentChatMsgs.findIndex(m => m.id.startsWith('temp-') && m.text === newMsg.text)
+                            const tempIndex = currentChatMsgs.findIndex(m => m.id.startsWith('temp-') && (m.text === newMsg.text || m.audioData === newMsg.audioData || m.imageData === newMsg.imageData))
                             if (tempIndex !== -1) {
                                 const updated = [...currentChatMsgs]
                                 updated[tempIndex] = newMsg
@@ -171,11 +554,29 @@ export default function MessagesPage() {
                                 }
                             }
                         }
-
+ 
                         // 3. Otherwise (e.g. from other user or no optimistic match), append it
                         return {
                             ...prev,
                             [selectedChat.id]: [...currentChatMsgs, newMsg]
+                        }
+                    })
+                } else if (data.type === 'message_update') {
+                    const updatedMsg = data.data
+                    setConversations(prev => {
+                        const currentChatMsgs = prev[selectedChat.id] || []
+                        const updated = currentChatMsgs.map(m => {
+                            if (m.id === updatedMsg.id) {
+                                return {
+                                    ...m,
+                                    reactions: updatedMsg.reactions
+                                }
+                            }
+                            return m
+                        })
+                        return {
+                            ...prev,
+                            [selectedChat.id]: updated
                         }
                     })
                 }
@@ -450,9 +851,20 @@ export default function MessagesPage() {
                                         )
                                     }
                                     acc.el.push(
-                                        <div key={m.id} className={`flex ${m.author === 'me' ? 'justify-end' : 'justify-start'}`}>
-                                            <div className={`relative max-w-[80%] px-3 py-2 text-sm rounded-2xl ${m.author === 'me' ? 'rounded-br-md bg-foreground text-background' : 'rounded-bl-md bg-muted text-foreground'}`}
+                                        <div key={m.id} className={`flex ${m.author === 'me' ? 'justify-end' : 'justify-start'} mb-2`}>
+                                            <div 
+                                                className={`relative max-w-[80%] px-3 py-2 text-sm rounded-2xl ${
+                                                    m.author === 'me' ? 'rounded-br-md bg-foreground text-background' : 'rounded-bl-md bg-muted text-foreground'
+                                                }`}
                                                 onClick={() => setReplyTarget(m)}
+                                                onContextMenu={(e) => {
+                                                    e.preventDefault()
+                                                    const rect = e.currentTarget.getBoundingClientRect()
+                                                    setActiveReactionPicker({
+                                                        messageId: m.id,
+                                                        rect
+                                                    })
+                                                }}
                                             >
                                                 {m.replyTo && (
                                                     <div className={`absolute ${m.author === 'me' ? 'right-2 -top-3' : 'left-2 -top-3'} z-10`}>
@@ -461,8 +873,47 @@ export default function MessagesPage() {
                                                         </div>
                                                     </div>
                                                 )}
-                                                <div>{m.text}</div>
+                                                {m.imageData ? (
+                                                    <div className="space-y-1">
+                                                        <div className="max-w-full rounded-lg overflow-hidden border border-border/10 bg-muted/20">
+                                                            <img src={m.imageData} alt="Shared photo" className="max-h-60 object-cover rounded-md" />
+                                                        </div>
+                                                        {m.text !== "📷 Photo" && <div>{m.text}</div>}
+                                                    </div>
+                                                ) : m.audioData ? (
+                                                    <VoiceNotePlayer
+                                                        audioData={m.audioData}
+                                                        duration={m.audioDuration}
+                                                        author={m.author}
+                                                    />
+                                                ) : (
+                                                    <div>{m.text}</div>
+                                                )}
                                                 <div className={`mt-1 text-[10px] ${m.author === 'me' ? 'text-background/80' : 'text-muted-foreground'}`}>{formatTime(d)}</div>
+
+                                                {/* Reaction Badges */}
+                                                {m.reactions && m.reactions.length > 0 && (
+                                                    <div className={`absolute -bottom-2.5 ${m.author === 'me' ? 'left-2' : 'right-2'} flex gap-1 z-20`}>
+                                                        {Object.entries(
+                                                            m.reactions.reduce<Record<string, number>>((acc, r) => {
+                                                                acc[r.emoji] = (acc[r.emoji] || 0) + 1
+                                                                return acc
+                                                            }, {})
+                                                        ).map(([emoji, count]) => (
+                                                            <div
+                                                                key={emoji}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation()
+                                                                    handleToggleReaction(m.id, emoji)
+                                                                }}
+                                                                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-background border border-border shadow-sm text-xs cursor-pointer select-none hover:scale-105 active:scale-95 transition-transform text-foreground"
+                                                            >
+                                                                <span>{emoji}</span>
+                                                                {count > 1 && <span className="text-[9px] font-bold text-muted-foreground">{count}</span>}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     )
@@ -484,24 +935,79 @@ export default function MessagesPage() {
                                     </button>
                                 </div>
                             )}
-                            <div className="max-w-2xl mx-auto flex items-center gap-2">
-                                <input
-                                    type="text"
-                                    value={inputValue}
-                                    onChange={(e) => setInputValue(e.target.value)}
-                                    onKeyDown={handleKeyDown}
-                                    placeholder={`Message ${selectedChat.name}`}
-                                    className="flex-1 h-11 px-4 rounded-full bg-muted text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-destructive"
-                                />
-                                <Button variant="default" className="h-11 px-4 rounded-full" onClick={handleSend}>
-                                    <Send className="w-4 h-4" />
-                                </Button>
-                            </div>
+                            {isRecording ? (
+                                <div className="max-w-2xl mx-auto flex items-center justify-between gap-3 h-11 px-4 rounded-full bg-destructive/10 border border-destructive/20 text-destructive">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2.5 h-2.5 rounded-full bg-destructive animate-ping" />
+                                        <span className="text-sm font-semibold">Recording {formatDuration(recordingTime)}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={cancelRecording}
+                                            className="p-2 hover:bg-destructive/25 rounded-full transition-colors cursor-pointer text-destructive"
+                                            aria-label="Cancel recording"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                            onClick={sendRecording}
+                                            className="p-2 bg-destructive text-white rounded-full transition-colors cursor-pointer hover:bg-destructive/90 shadow-sm"
+                                            aria-label="Send recording"
+                                        >
+                                            <Send className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="max-w-2xl mx-auto flex items-center gap-2">
+                                    <input
+                                        type="file"
+                                        ref={fileInputRef}
+                                        onChange={handleSelectImage}
+                                        accept="image/*"
+                                        className="hidden"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="p-2.5 rounded-full hover:bg-muted text-muted-foreground transition duration-150 cursor-pointer flex-shrink-0"
+                                        aria-label="Send photo"
+                                    >
+                                        <ImageIcon className="w-5 h-5" />
+                                    </button>
+                                    <input
+                                        type="text"
+                                        value={inputValue}
+                                        onChange={(e) => setInputValue(e.target.value)}
+                                        onKeyDown={handleKeyDown}
+                                        placeholder={`Message ${selectedChat.name}`}
+                                        className="flex-1 h-11 px-4 rounded-full bg-muted text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-destructive"
+                                    />
+                                    {inputValue.trim() ? (
+                                        <Button variant="default" className="h-11 px-4 rounded-full cursor-pointer flex-shrink-0" onClick={handleSend}>
+                                            <Send className="w-4 h-4" />
+                                        </Button>
+                                    ) : (
+                                        <Button variant="default" className="h-11 px-4 rounded-full bg-destructive text-white hover:bg-destructive/95 cursor-pointer flex-shrink-0" onClick={startRecording} aria-label="Record voice note">
+                                            <Mic className="w-4 h-4" />
+                                        </Button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
             )}
 
+            {/* Reaction Picker Overlay */}
+            {activeReactionPicker && (
+                <ReactionPicker
+                    anchorRect={activeReactionPicker.rect}
+                    onSelectEmoji={(emoji) => handleToggleReaction(activeReactionPicker.messageId, emoji)}
+                    onClose={() => setActiveReactionPicker(null)}
+                />
+            )}
+ 
             <BottomNavigation />
         </div>
     )

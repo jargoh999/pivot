@@ -16,12 +16,12 @@ export async function POST(req: Request) {
     }
 
     const { userId } = authResult;
-    const { conversationId, text, replyTo } = await req.json();
+    const { conversationId, text, replyTo, audioData, audioDuration, imageData } = await req.json();
 
     // Validate input
-    if (!conversationId || !text) {
+    if (!conversationId || (!text && !audioData && !imageData)) {
       return NextResponse.json(
-        { error: 'Conversation ID and text are required' },
+        { error: 'Conversation ID and either text, audio, or image data are required' },
         { status: 400 }
       );
     }
@@ -43,12 +43,24 @@ export async function POST(req: Request) {
       (p: any) => p.toString() !== userId
     );
 
+    let messageText = '';
+    if (audioData) {
+      messageText = '🎤 Voice Note';
+    } else if (imageData) {
+      messageText = '📷 Photo';
+    } else {
+      messageText = text.trim();
+    }
+
     // Create new message
     const newMessage = new Message({
       senderId: userId,
       receiverId,
       conversationId,
-      text: text.trim(),
+      text: messageText,
+      audioData,
+      audioDuration,
+      imageData,
       replyTo: replyTo ? {
         messageId: replyTo.id,
         text: replyTo.text,
@@ -73,6 +85,10 @@ export async function POST(req: Request) {
       id: newMessage._id.toString(),
       author: 'me',
       text: newMessage.text,
+      audioData: newMessage.audioData,
+      audioDuration: newMessage.audioDuration,
+      imageData: newMessage.imageData,
+      reactions: [],
       timestamp: newMessage.createdAt.toISOString(),
       replyTo: replyTo,
     };

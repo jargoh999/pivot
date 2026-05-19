@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import jwt from 'jsonwebtoken';
 
-export async function authMiddleware(req: NextRequest) {
+export async function authMiddleware(req: Request) {
   try {
     let token = null;
 

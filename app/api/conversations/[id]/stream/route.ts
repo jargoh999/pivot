@@ -42,21 +42,21 @@ export async function GET(
           // Send initial connection message
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'connected' })}\n\n`));
 
-          // Watch for new messages using MongoDB change stream
+          // Watch for new messages and reactions using MongoDB change stream
           const changeStream = Message.watch([
             {
               $match: {
                 'fullDocument.conversationId': conversation._id,
               },
             },
-          ]);
-
+          ], { fullDocument: 'updateLookup' });
+ 
           changeStream.on('change', async (change) => {
             if (change.operationType === 'insert') {
               const newMessage = await Message.findById(change.documentKey._id)
                 .populate('senderId', 'fullName profilePhoto')
                 .populate('replyTo.messageId', 'text senderId');
-
+ 
               if (newMessage) {
                 const isMe = newMessage.senderId._id.toString() === userId;
                 
@@ -70,19 +70,41 @@ export async function GET(
                     author: isReplyToMe ? 'me' : 'them',
                   };
                 }
-
+ 
                 const formattedMessage = {
                   type: 'new_message',
                   data: {
                     id: newMessage._id.toString(),
                     author: isMe ? 'me' : 'them',
                     text: newMessage.text,
+                    audioData: newMessage.audioData,
+                    audioDuration: newMessage.audioDuration,
+                    imageData: newMessage.imageData,
+                    reactions: (newMessage.reactions || []).map((r: any) => ({
+                      userId: r.userId.toString(),
+                      emoji: r.emoji,
+                    })),
                     timestamp: newMessage.createdAt.toISOString(),
                     replyTo,
                   },
                 };
-
+ 
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify(formattedMessage)}\n\n`));
+              }
+            } else if (change.operationType === 'update') {
+              const updatedMessage = await Message.findById(change.documentKey._id);
+              if (updatedMessage) {
+                const formattedReactionUpdate = {
+                  type: 'message_update',
+                  data: {
+                    id: updatedMessage._id.toString(),
+                    reactions: (updatedMessage.reactions || []).map((r: any) => ({
+                      userId: r.userId.toString(),
+                      emoji: r.emoji,
+                    })),
+                  },
+                };
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(formattedReactionUpdate)}\n\n`));
               }
             }
           });

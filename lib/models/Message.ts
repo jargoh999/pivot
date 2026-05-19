@@ -37,6 +37,28 @@ const messageSchema = new Schema({
   readAt: {
     type: Date,
   },
+  audioData: {
+    type: String,
+  },
+  audioDuration: {
+    type: Number,
+  },
+  imageData: {
+    type: String,
+  },
+  reactions: [
+    {
+      userId: {
+        type: Schema.Types.ObjectId,
+        ref: 'pivot-user',
+        required: true,
+      },
+      emoji: {
+        type: String,
+        required: true,
+      },
+    }
+  ],
 }, {
   timestamps: true,
 });
